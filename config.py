@@ -2,7 +2,7 @@
 
 
 
-dbhost='172.21.109.200'
+dbhost='172.21.109.67'
 dbport=3306
-dbuser='zhaixiaona'
+dbuser='root'
 dbpassword='zhaixiaona'
