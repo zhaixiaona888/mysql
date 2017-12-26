@@ -1,0 +1,217 @@
+Percona Xtradb Cluster 安装
+Percona Xtradb Cluster 介绍 Percona XtraDB Cluster 简称:PXC, 是针对 MySQL 用户的高可用性和扩展性解决方案， 基于 Percona Server 。其包括了 Write Set REPlication 补丁，使用 Galera 库，这是一个针对事 务性应用程序的同步多主机复制插件。
+Percona XtraDB Cluster 特点： 同步复制（真正的同步），事务可以在所有节点上提交(多点写入)。 多主机复制，你可以写到任何节点。每个节点是一个完整的 copy。 任何 query 可以在本地完成 
+Percona XtraDB Cluster 完全兼容 MySQL 或 Percona Server，包括： 数据兼容。Percona XtraDB Cluster 可在由 MySQL 或 Percona Server 创建的数据库上使用。 应用程序兼容。如果要使用 Percona XtraDB Cluster，你的应用程序基本不需要作任何更改。 
+
+PXC 和 Replication 的区别 
+Let’s take look into the well known CAP theorem for Distributed systems. Characteristics of Distributed systems:
+C - Consistency (all your data is consistent on all nodes), 
+A - Availability (your system is AVAILABLE to handle requests in case of failure of one or several nodes ), 
+P - Partitioning tolerance (in case of inter-node connection failure, each node is still available to handle requests).
+CAP theorem says that each Distributed system can have only two out of these three. 
+MySQL replication has: Availability and Partitioning tolerance.（这个 p 是指从库上可以 不完全同步）
+Percona XtraDB Cluster has: Consistency and Availability. 
+基于以上可以可以看出来 Replication 并不能真正保证数据一致性，但 PXC 提供了强的 数据一致性，但牺牲的分区特性。
+
+pxc安装环境需求
+集群名 pxc 节点
+节点1 172.21.109.67 node1
+节点2 172.21.109.68 node2
+节点3 172.21.109.10 node3
+
+
+PXC安装基本步骤
+主要软件下载 
+ 
+Percona-Xtradb-Cluster 5.6 版本下载 
+wget http://www.percona.com/downloads/Percona-XtraDB-Cluster-56/Percona-XtraDB-Cluster-5.6.21 -25.8/binary/tarball/Percona-XtraDB-Cluster-5.6.21-rel70.1-25.8.938.Linux.x86_64.tar.gz
+
+ 
+
+
+基本软件安装
+yum install –y perl-DBD-MySQL.x86_64 perl-IO-Socket-SSL.noarch socat.x86_64 nc rsync
+ 
+
+若是yum下不来，则直接去官网下载相应软件包，进行rpm -ivh 安装即可；
+
+继续安装如下软件注意相应版本需对应；
+yum install http://www.percona.com/downloads/percona-release/redhat/0.1-3/percona-release-0.1-3.noar ch.rpm
+
+yum install -y percona-xtrabackup.x86_64
+
+ 
+注意是否安装上
+
+# Percona-XtraDB-Cluster-5.6.21-rel70.1-25.8.938.Linux.x86_64.tar.gz 下载完毕后，还是解压到 /opt/mysql/ 下面 在/usr/local/下创建 mysql 的软连 
+
+#ln -s /opt/mysql/ Percona-XtraDB-Cluster-5.6.21-rel70.1-25.8.938.Linux.x86_64 mysql
+mysql配置文件：/etc/my.cnf
+创建 mysql 的用户及组
+#groupadd mysql 
+#useradd –g msyql –s /sbin/nologin –d /usr/local/mysql mysql
+#cp /usr/local/mysql/support-file/mysql.server /etc/init.d/mysql
+
+创建 mysql 需要的基本目录 
+#mkdir /data/mysql/mysql_3306 
+#mkdir /data/mysql/mysql_3306/data
+#mkdir /data/mysql/mysql_3306/logs
+#mkdir /data/mysql/mysql_3306/tmp
+
+./scripts/mysql_install_db
+确认结果正确
+
+
+PXC 配置文件 
+pxc 大多是独占服务器，使用/etc/my.cnf 配置文件，相对于以前咱们使用的配置文件多了以 下部分。其中 binlog_format 需要修改为 ROW ，其它为添加部分，增加部分如下：
+
+pxc 的配置文件在原来 my.cnf 上需要添加以下几处：
+#percona xtradb cluster 
+binlog_format = ROW #日志格式必须为 ROW 
+default_storage_engine=InnoDB 
+innodb_locks_unsafe_for_binlog=1 
+innodb_autoinc_lock_mode=2 
+wsrep_cluster_name=pxc #cluster 的名字 
+wsrep_cluster_address=gcomm:172.21.109.67,172.21.109.68,172.21.109.10 #cluster 中的节点ip
+wsrep_node_address=172.21.109.67#cluster 当前节点的 ip wsrep_provider=/usr/local/mysql/lib/libgalera_smm.so 
+#wsrep_sst_method=rsync
+wsrep_sst_method=xtrabackup-v2 
+wsrep_sst_auth=sst:zhaixiaona
+
+
+PXC的启动和关闭
+
+数据库初始化
+配置文件还存放到/etc/my.cnf 中
+#cd /usr/local/mysql 
+#./script/mysql_db_install
+ 
+
+看到两个ok，确认无错误，则正常初始化结束
+
+第一个节点启动
+# cp support-files/mysql.server /etc/init.d/mysql 
+#/etc/init.d/mysql bootstrap-pxc
+ 
+
+启动后初始化
+delete from mysql.user where user !='root' or host!='localhost';
+truncate mysql.db;
+drop database test;
+grant all privileges on *.* to 'zhaixiaona'@'%' identified by 'zhaixiaona';
+grant all privileges on *.* to 'sst'@'localhost' identified by 'zhaixiaona';
+flush privileges;
+
+其它节点启动
+注意配置文件更改server_id，最好为ip后两位+端口号，更改wsrep_node_address 当前ip地址
+
+要确认一下所有的节点的 iptables 是关闭的。 进行数据库初始化，然后启动（注意启动方式） 
+在172.21.108.68上执行
+#/etc/init.d/mysql start
+
+启动完毕确认error.log文件中有无报错，查看节点启动过程分析；
+进入数据库
+delete from mysql.user where user !='root' or host!='localhost';
+truncate mysql.db;
+drop database test;
+grant all privileges on *.* to 'zhaixiaona'@'%' identified by 'zhaixiaona';
+grant all privileges on *.* to 'sst'@'localhost' identified by 'zhaixiaona';
+flush privileges;
+show global status like '%wsrep%';
+ 
+
+关闭 
+#/etc/init.d/mysql stop 
+全部节点关闭后重启 第一个节点启动的节点（如果集群全部关闭，第一个起动也需要用这样的形式） #/etc/init.d/mysql bootstrap-pxc 
+其它节点
+#/etc/init.d/mysql start 
+备注： 如集群是不是所有的节点都关闭不用使#/etc/init.d/mysql bootstrap-pxc 启动。都可以用 #/etc/init.d/mysql start 启动。
+
+新加入节点
+新加入节点相当于新启一个节点，在启动时间把自写入 wsrep_cluster_address 中，同时在 wsrep_node_address 中声明自已的 IP 即可。
+
+测试
+
+Q1. Binlog_format 配置成 MIXED，不支持，需要配置成 ROW 格式 
+Q2. 任何节点写入数据看能不能同步？ 
+Q3. PXC 架构中三个节点的 binlog 内容是不是一样？ （观查三个节点 Binlog 的内容变化） 
+Q4. PXC 集群如果挂一个从库做备份，集群中那个节点可以担任主库？
+
+报错处理
+1）找不到libcryto.so.6文件
+root@beiku mysql]# ./scripts/mysql_install_db 
+./bin/my_print_defaults: error while loading shared libraries: libcrypto.so.6: cannot open shared object file: No such file or directory
+FATAL ERROR: Neither host 'beiku' nor 'localhost' could be looked up with
+./bin/resolveip
+Please configure the 'hostname' command to return a correct
+hostname.
+If you want to solve this at a later stage, restart this script
+with the --force option
+
+分析原因：系统找不到libcrypto.so.6文件 ，openssl 可能没装
+
+如果提示已经安装，可以使用
+#updatedb 
+#locate libssl.so 看看能不能找到 然后用 
+# ldd /usr/local/mysql/bin/mysqld 查看还有那些依赖需安装
+ 
+
+
+ 
+
+解决办法：
+openssl 没装：
+yum install –y openssl openssl-devel
+cd /usr/lib64
+ln -s libcrypto.so.1.0.1e libcrypto.so.6 #有相应版本，版本不对，做个软链即可
+
+最后在用 
+ldd /usr/local/mysql/bin/mysqld 
+去确认是否有没加载的 so, 如果存在同样的方法修 复。
+
+ 
+
+2）安装中socat找不到
+ 
+
+socat 包没装上，可以把 epel 的源加入就可以安装。
+下载地址
+https://centos.pkgs.org/6/epel-x86_64/socat-1.7.2.3-1.el6.x86_64.rpm.html
+
+3）启动报错，找不到 my_print_defaults 的
+ 
+可以更改/etc/my.cnf 在[mysqld]中添加 basedir=/usr/local/mysql/ 
+如果还不行，可以通过在/etc/init.d/mysql 中找到 basedir 定义为: basedir=/usr/local/mysql/
+或者直接去/usr/local/mysql下执行启动
+
+4）xtrabackup版本太低
+ERROR] WSREP: Failed to read 'ready <addr>' from: wsrep_sst_xtrabackup-v2 --role 'joiner' --
+
+参考 
+官方文档： http://www.percona.com/doc/percona-xtradb-cluster/5.6/
+
+pxc原理分析
+pxc环境所涉及的端口：
+#mysql实例端口
+1. Regular MySQL port, default 3306. 
+#pxc cluster相互通讯的端口集群互相沟通
+2. Port for group communication, default 4567. It can be changed by the option: 
+wsrep_provider_options ="gmcast.listen_addr=tcp://0.0.0.0:4010; "
+#用于SST传送的端口
+3. Port for State Transfer, default 4444. It can be changed by the option: 
+wsrep_sst_receive_address=10.11.12.205:5555
+#用于IST传送的端口增量
+4. Port for Incremental State Transfer, default port for group communication + 1 (4568). It can be changed by the option: 
+wsrep_provider_options = "ist.recv_addr=10.11.12.206:7777; "
+
+
+建议：最小是3个节点，虽然两个节点也能运行，但是无法保证数据的稳定，当两个节点时，任何一个节点出现故障，将导致集群无法访问最大是<=8
+
+
+故障处理：若数据不大，则重新搞一次初始化，进行sst传输即可，若是数据很大，则用rsync传输
+利用xtrabackp 做备份恢复
+脑裂故障提示 unkown command 
+
+
+
+
